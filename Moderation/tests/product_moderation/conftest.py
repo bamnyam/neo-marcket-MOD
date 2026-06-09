@@ -5,7 +5,11 @@ from rest_framework.test import APIClient
 
 from app.product_moderation.api import B2BClientError
 from app.product_moderation.models import ProductBlockingReason, ProductModeration
-from app.product_moderation.views import ApproveProductView, DeclineProductView
+from app.product_moderation.views import (
+    ApproveProductView,
+    DeclineProductView,
+    ProductEventView,
+)
 
 
 class SuccessfulApproveB2BClient:
@@ -49,15 +53,20 @@ def reset_b2b_client_classes():
     ApproveProductView.b2b_client_class = SuccessfulApproveB2BClient
     SuccessfulDeclineB2BClient.events = []
     DeclineProductView.b2b_client_class = SuccessfulDeclineB2BClient
+    ProductEventView.b2b_client_class = SuccessfulApproveB2BClient
     yield
     ApproveProductView.b2b_client_class = SuccessfulApproveB2BClient
     SuccessfulDeclineB2BClient.events = []
     DeclineProductView.b2b_client_class = SuccessfulDeclineB2BClient
+    ProductEventView.b2b_client_class = SuccessfulApproveB2BClient
 
 
 @pytest.fixture
-def api_client():
-    return APIClient()
+def api_client(settings):
+    settings.MOD_SERVICE_KEY = "mod-service-key"
+    client = APIClient()
+    client.credentials(HTTP_X_SERVICE_KEY="mod-service-key")
+    return client
 
 
 @pytest.fixture

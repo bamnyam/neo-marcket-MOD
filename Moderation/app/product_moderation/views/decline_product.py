@@ -1,3 +1,4 @@
+from django.conf import settings
 import uuid
 
 from rest_framework import status
@@ -13,12 +14,17 @@ from app.product_moderation.services import (
     decline_product,
     get_moderator_id,
 )
+from app.product_moderation.views.auth import validate_service_key
 
 
 class DeclineProductView(APIView):
     b2b_client_class = B2BClient
 
     def post(self, request, product_id: uuid.UUID) -> Response:
+        service_key_error = validate_service_key(request, settings.MOD_SERVICE_KEY)
+        if service_key_error is not None:
+            return service_key_error
+
         serializer = DeclineProductRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 

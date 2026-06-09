@@ -37,3 +37,10 @@ class DeclineProductRequestSerializer(serializers.Serializer):
     blocking_reason_id = serializers.UUIDField()
     moderator_comment = serializers.CharField(max_length=1000)
     field_reports = FieldReportSerializer(many=True, required=False, default=list)
+
+
+class ProductEventSerializer(serializers.Serializer):
+    event = serializers.ChoiceField(choices=["CREATED", "EDITED", "DELETED"])
+    product_id = serializers.UUIDField()
+    seller_id = serializers.UUIDField()
+    date = serializers.DateTimeField(required=False)
