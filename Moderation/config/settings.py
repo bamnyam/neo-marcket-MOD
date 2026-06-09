@@ -110,4 +110,6 @@ STATIC_URL = "static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 B2B_URL = os.getenv("B2B_URL", "").rstrip("/")
+MOD_SERVICE_KEY = os.getenv("MOD_SERVICE_KEY", "")
 MOD_TO_B2B_KEY = os.getenv("MOD_TO_B2B_KEY", "")
+B2B_TO_MOD_KEY = os.getenv("B2B_TO_MOD_KEY", "")

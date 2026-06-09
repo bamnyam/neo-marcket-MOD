@@ -119,11 +119,11 @@ def decline_product(
     _validate_moderation(moderation, moderator_id)
 
     blocking_reason = _get_blocking_reason(blocking_reason_id)
-    if blocking_reason.hard_block:
-        raise ModerationDecisionError(
-            "Blocking reason requires hard block flow",
-            HTTPStatus.BAD_REQUEST,
-        )
+    target_status = (
+        ProductModeration.Status.HARD_BLOCKED
+        if blocking_reason.hard_block
+        else ProductModeration.Status.BLOCKED
+    )
 
     try:
         with transaction.atomic():
@@ -132,7 +132,7 @@ def decline_product(
             )
             _validate_moderation(moderation, moderator_id)
 
-            moderation.status = ProductModeration.Status.BLOCKED
+            moderation.status = target_status
             moderation.date_moderation = timezone.now()
             moderation.blocking_reason = blocking_reason
             moderation.moderator_comment = moderator_comment
@@ -162,7 +162,7 @@ def decline_product(
             b2b_client.send_moderation_event(
                 str(product_id),
                 ProductModeration.Status.BLOCKED,
-                hard_block=False,
+                hard_block=blocking_reason.hard_block,
                 blocking_reason={
                     "id": str(blocking_reason.id),
                     "title": blocking_reason.title,
@@ -190,8 +190,34 @@ def decline_product(
 
     return {
         "product_id": str(product_id),
-        "status": ProductModeration.Status.BLOCKED,
+        "status": target_status,
     }
+
+
+def handle_product_event(
+    *,
+    event: str,
+    product_id: uuid.UUID,
+    seller_id: uuid.UUID,
+    b2b_client,
+) -> None:
+    if event == "EDITED":
+        _handle_edited_event(product_id=product_id, b2b_client=b2b_client)
+        return
+
+    if event == "DELETED":
+        ProductModeration.objects.filter(product_id=product_id).delete()
+        return
+
+    if event == "CREATED":
+        _handle_created_event(
+            product_id=product_id,
+            seller_id=seller_id,
+            b2b_client=b2b_client,
+        )
+        return
+
+    raise ModerationDecisionError("Unknown product event", HTTPStatus.BAD_REQUEST)
 
 
 def _get_moderation(product_id: uuid.UUID) -> ProductModeration:
@@ -214,6 +240,96 @@ def _get_blocking_reason(blocking_reason_id: uuid.UUID) -> ProductBlockingReason
         ) from exc
 
 
+def _handle_created_event(
+    *,
+    product_id: uuid.UUID,
+    seller_id: uuid.UUID,
+    b2b_client,
+) -> None:
+    if ProductModeration.objects.filter(
+        product_id=product_id,
+        status=ProductModeration.Status.HARD_BLOCKED,
+    ).exists():
+        return
+
+    if ProductModeration.objects.filter(product_id=product_id).exists():
+        raise ModerationDecisionError(
+            "Product already exists in moderation queue",
+            HTTPStatus.BAD_REQUEST,
+        )
+
+    try:
+        product = b2b_client.get_product(str(product_id))
+    except B2BClientError as exc:
+        logger.exception("Cannot process CREATED event for product %s", product_id)
+        raise ModerationDecisionError(
+            "Failed to get product from B2B",
+            HTTPStatus.INTERNAL_SERVER_ERROR,
+        ) from exc
+
+    ProductModeration.objects.create(
+        product_id=product_id,
+        seller_id=seller_id,
+        json_after=product,
+        status=ProductModeration.Status.PENDING,
+        queue_priority=ProductModeration.QueuePriority.NEW_PRODUCTS,
+        total_active_quantity=ProductModeration.calculate_total_active_quantity(product),
+    )
+
+
+def _handle_edited_event(*, product_id: uuid.UUID, b2b_client) -> None:
+    try:
+        with transaction.atomic():
+            moderation = ProductModeration.objects.select_for_update().get(
+                product_id=product_id
+            )
+            if moderation.status == ProductModeration.Status.HARD_BLOCKED:
+                return
+
+            old_status = moderation.status
+            old_json_after = moderation.json_after
+
+            try:
+                product = b2b_client.get_product(str(product_id))
+            except B2BClientError as exc:
+                logger.exception("Cannot process EDITED event for product %s", product_id)
+                raise ModerationDecisionError(
+                    "Failed to get product from B2B",
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                ) from exc
+
+            total_active_quantity = ProductModeration.calculate_total_active_quantity(
+                product
+            )
+            moderation.json_before = old_json_after
+            moderation.json_after = product
+            moderation.status = ProductModeration.Status.PENDING
+            moderation.queue_priority = ProductModeration.calculate_queue_priority(
+                old_status=old_status,
+                total_active_quantity=total_active_quantity,
+                current_queue_priority=moderation.queue_priority,
+            )
+            moderation.total_active_quantity = total_active_quantity
+            moderation.moderator_id = None
+            moderation.save(
+                update_fields=[
+                    "json_before",
+                    "json_after",
+                    "status",
+                    "queue_priority",
+                    "total_active_quantity",
+                    "moderator_id",
+                    "date_updated",
+                ]
+            )
+            moderation.field_reports.all().delete()
+    except ProductModeration.DoesNotExist as exc:
+        raise ModerationDecisionError(
+            "Product not found in moderation queue",
+            HTTPStatus.BAD_REQUEST,
+        ) from exc
+
+
 def _validate_moderation(
     moderation: ProductModeration,
     moderator_id: uuid.UUID,
@@ -221,7 +337,7 @@ def _validate_moderation(
     if moderation.status == ProductModeration.Status.HARD_BLOCKED:
         raise ModerationDecisionError(
             "Product is permanently blocked",
-            HTTPStatus.CONFLICT,
+            HTTPStatus.FORBIDDEN,
         )
 
     if moderation.status != ProductModeration.Status.IN_REVIEW:

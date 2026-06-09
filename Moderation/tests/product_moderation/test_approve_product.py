@@ -64,7 +64,7 @@ def test_approve_product_rejects_hard_blocked(api_client, create_moderation):
         HTTP_X_MODERATOR_ID=str(moderation.moderator_id),
     )
 
-    assert response.status_code == 409
+    assert response.status_code == 403
     assert response.json() == {"error": "Product is permanently blocked"}
 
 

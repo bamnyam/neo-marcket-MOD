@@ -131,7 +131,7 @@ def test_decline_product_rejects_hard_blocked_status(
         HTTP_X_MODERATOR_ID=str(moderation.moderator_id),
     )
 
-    assert response.status_code == 409
+    assert response.status_code == 403
     assert response.json() == {"error": "Product is permanently blocked"}
 
 
@@ -200,10 +200,11 @@ def test_decline_product_rejects_unknown_blocking_reason(api_client, create_mode
 
 
 @pytest.mark.django_db
-def test_decline_product_rejects_hard_block_reason(
+def test_decline_product_uses_hard_block_reason(
     api_client,
     create_moderation,
     create_blocking_reason,
+    successful_decline_b2b_client_class,
 ):
     moderation = create_moderation()
     reason = create_blocking_reason(hard_block=True)
@@ -218,8 +219,17 @@ def test_decline_product_rejects_hard_block_reason(
         HTTP_X_MODERATOR_ID=str(moderation.moderator_id),
     )
 
-    assert response.status_code == 400
-    assert response.json() == {"error": "Blocking reason requires hard block flow"}
+    assert response.status_code == 200
+    assert response.json() == {
+        "product_id": str(moderation.product_id),
+        "status": ProductModeration.Status.HARD_BLOCKED,
+    }
+    moderation.refresh_from_db()
+    assert moderation.status == ProductModeration.Status.HARD_BLOCKED
+    assert successful_decline_b2b_client_class.events[0]["status"] == (
+        ProductModeration.Status.BLOCKED
+    )
+    assert successful_decline_b2b_client_class.events[0]["hard_block"] is True
 
 
 @pytest.mark.django_db
