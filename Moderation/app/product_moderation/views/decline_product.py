@@ -6,18 +6,18 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from app.product_moderation.api import (
-    ApproveProductRequestSerializer,
     B2BClient,
+    DeclineProductRequestSerializer,
 )
 from app.product_moderation.services import (
     ModerationDecisionError,
-    approve_product,
+    decline_product,
     get_moderator_id,
 )
 from app.product_moderation.views.auth import validate_service_key
 
 
-class ApproveProductView(APIView):
+class DeclineProductView(APIView):
     b2b_client_class = B2BClient
 
     def post(self, request, product_id: uuid.UUID) -> Response:
@@ -25,22 +25,23 @@ class ApproveProductView(APIView):
         if service_key_error is not None:
             return service_key_error
 
-        serializer = ApproveProductRequestSerializer(data=request.data)
+        serializer = DeclineProductRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
         moderator_id = get_moderator_id(request)
         if moderator_id is None:
-            return self._error(
-                "UNAUTHORIZED",
-                "Moderator id is required",
-                status.HTTP_401_UNAUTHORIZED,
+            return Response(
+                {"error": "Moderator id is required"},
+                status=status.HTTP_401_UNAUTHORIZED,
             )
 
         try:
-            result = approve_product(
+            result = decline_product(
                 product_id=product_id,
                 moderator_id=moderator_id,
-                moderator_comment=serializer.validated_data.get("moderator_comment"),
+                blocking_reason_id=serializer.validated_data["blocking_reason_id"],
+                moderator_comment=serializer.validated_data["moderator_comment"],
+                field_reports=serializer.validated_data["field_reports"],
                 b2b_client=self.b2b_client_class(),
             )
         except ModerationDecisionError as exc:

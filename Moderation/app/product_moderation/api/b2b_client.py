@@ -38,15 +38,29 @@ class B2BClient:
             logger.exception("Failed to get product %s from B2B", product_id)
             raise B2BClientError("Failed to get product from B2B") from exc
 
-    def send_moderation_event(self, product_id: str, event_type: str) -> None:
-        payload = json.dumps(
-            {
-                "event_type": event_type,
-                "idempotency_key": str(uuid.uuid4()),
-                "occurred_at": timezone.now().isoformat().replace("+00:00", "Z"),
-                "product_id": product_id,
-            }
-        ).encode("utf-8")
+    def send_moderation_event(
+        self,
+        product_id: str,
+        status: str,
+        *,
+        hard_block: bool | None = None,
+        blocking_reason: dict[str, Any] | None = None,
+        field_reports: list[dict[str, Any]] | None = None,
+    ) -> None:
+        payload_data: dict[str, Any] = {
+            "product_id": product_id,
+            "status": status,
+        }
+        if hard_block is None and blocking_reason is None and field_reports is None:
+            payload_data["idempotency_key"] = str(uuid.uuid4())
+        if hard_block is not None:
+            payload_data["hard_block"] = hard_block
+        if blocking_reason is not None:
+            payload_data["blocking_reason"] = blocking_reason
+        if field_reports is not None:
+            payload_data["field_reports"] = field_reports
+
+        payload = json.dumps(payload_data).encode("utf-8")
         request = Request(
             f"{self._base_url()}/api/v1/moderation/events",
             method="POST",
